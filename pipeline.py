@@ -1,36 +1,32 @@
 """
-Data Processing Pipeline - CLI Template
+Data Processing Pipeline
 
 DS 3500 - MP1
 
 Usage:
-    python pipeline.py --input fixtures/sample.csv --output cleaned_data.csv --config config.yaml
-    python pipeline.py --input fixtures/sample.csv --output cleaned_data.csv --config config.yaml --verbose
+    python pipeline.py --input fixtures/sample_data.csv --output output/clean.csv --config config/config.yaml
+    python pipeline.py --input fixtures/sample_data.csv --output output/clean.csv --config config/config.yaml --verbose
 """
 
 import argparse
 import logging
 import sys
-from pathlib import Path
 from pprint import pprint
 
 import pandas as pd
 
-from data_loaders import load_data
-from data_processor import process_data, create_cleaning_report
+from src import (
+    create_cleaning_report,
+    load_data,
+    process_data,
+    save_data,
+    setup_logging,
+    validate_dataframe,
+    validate_input,
+)
 
 
 logger = logging.getLogger(__name__)
-
-
-def setup_logging(verbose=False):
-    """Configure logging for the pipeline."""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
-        datefmt="%H:%M:%S",
-    )
 
 
 def parse_arguments():
@@ -45,15 +41,6 @@ def parse_arguments():
         "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
     return parser.parse_args()
-
-
-def validate_input(filepath):
-    """Check whether the input path exists and is a file."""
-    if not Path(filepath).is_file():
-        logger.error(f"Input file not found: {filepath}")
-        return False
-    logger.info(f"Input file validated: {filepath}")
-    return True
 
 
 def main():
@@ -78,31 +65,43 @@ def main():
     except ValueError:
         sys.exit(1)
 
-    # The processor works on tables, so the input must load as a DataFrame
+    # The pipeline works on tables, so the input must load as a DataFrame
     if not isinstance(data, pd.DataFrame):
         logger.error(f"Input must be a CSV file for processing: {args.input}")
         sys.exit(1)
 
-    # Keep a copy of the original data for the cleaning report
-    df_original = data.copy()
+    # Read validation settings from the config
+    validation = config.get("validation", {})
+    required_columns = validation.get("required_columns", [])
+    numeric_columns = validation.get("numeric_columns", [])
+
+    # Validate the data
+    try:
+        df_valid = validate_dataframe(data, required_columns, numeric_columns)
+    except ValueError:
+        sys.exit(1)
+    logger.info(f"Validation complete: {len(data)} -> {len(df_valid)} rows")
+
+    # Keep a copy of the validated data for the cleaning report
+    df_original = df_valid.copy()
 
     # Process the data
     try:
-        df_clean = process_data(data, config)
+        df_clean = process_data(df_valid, config)
     except ValueError:
         sys.exit(1)
 
-    # Create the output
     report = create_cleaning_report(df_original, df_clean)
-    print("\nCleaning report:")
-    pprint(report, sort_dicts=False)
-
     logger.info(
         f"Processing complete: {len(df_original)} -> {len(df_clean)} rows"
     )
 
-    df_clean.to_csv(args.output, index=False)
-    logger.info(f"Saved cleaned data to {args.output}")
+    # Save the output
+    output_path = save_data(df_clean, args.output)
+    logger.info(f"Saved cleaned data to {output_path}")
+
+    print("\nCleaning report:")
+    pprint(report, sort_dicts=False)
 
 
 if __name__ == "__main__":
